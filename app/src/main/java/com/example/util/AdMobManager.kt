@@ -3,6 +3,7 @@ package com.example.util
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.os.Build
 import com.google.android.gms.ads.AdError
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.FullScreenContentCallback
@@ -15,6 +16,7 @@ import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
 
 /**
  * Official Google Mobile Ads (AdMob) Manager for Astra Astrology Malayalam.
@@ -33,27 +35,44 @@ object AdMobManager {
     private val _isRewardedAdReady = MutableStateFlow(false)
     val isRewardedAdReady: StateFlow<Boolean> = _isRewardedAdReady.asStateFlow()
 
+    /**
+     * Checks whether the current runtime is a virtual/cloud emulator without hardware
+     * GPU rendernode (/dev/dri/renderD128) or hardware Codec2 video bufferpool.
+     * Prevents MESA/Codec2/adservices background process errors on cloud emulators
+     * while keeping full AdMob functionality on all physical Android devices.
+     */
+    fun isCloudEmulatorWithoutRenderNode(): Boolean {
+        val isEmulator = Build.FINGERPRINT.startsWith("generic") ||
+            Build.FINGERPRINT.lowercase().contains("emulator") ||
+            Build.MODEL.contains("google_sdk") ||
+            Build.MODEL.lowercase().contains("sdk_gphone") ||
+            Build.MODEL.contains("Emulator") ||
+            Build.HARDWARE.contains("goldfish") ||
+            Build.HARDWARE.contains("ranchu") ||
+            Build.PRODUCT.contains("sdk") ||
+            Build.PRODUCT.contains("emulator")
+        return isEmulator && !File("/dev/dri/renderD128").exists()
+    }
+
     fun initialize(context: Context) {
-        if (isInitialized) return
+        if (isInitialized || isCloudEmulatorWithoutRenderNode()) return
         try {
             val appContext = context.applicationContext ?: context
+            isInitialized = true
             val requestConfiguration = RequestConfiguration.Builder()
                 .setTestDeviceIds(listOf(AdRequest.DEVICE_ID_EMULATOR))
                 .build()
             MobileAds.setRequestConfiguration(requestConfiguration)
             MobileAds.initialize(appContext) {
-                isInitialized = true
                 loadRewardedAd(appContext)
             }
-            isInitialized = true
-            loadRewardedAd(appContext)
         } catch (_: Throwable) {
             // Keep app functional in headless/unit-test or offline environments
         }
     }
 
     fun loadRewardedAd(context: Context) {
-        if (isLoadingRewardedAd || rewardedAd != null) return
+        if (isCloudEmulatorWithoutRenderNode() || isLoadingRewardedAd || rewardedAd != null) return
         try {
             val appContext = context.applicationContext ?: context
             isLoadingRewardedAd = true

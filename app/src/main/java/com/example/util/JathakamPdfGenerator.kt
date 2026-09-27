@@ -422,4 +422,96 @@ object JathakamPdfGenerator {
         }
         context.startActivity(Intent.createChooser(shareIntent, "Share Full HD Logo PNG"))
     }
+
+    /**
+     * Copies the currently installed APK package of this app to a shareable/exportable file.
+     */
+    fun exportInstalledApkFile(context: Context): File {
+        val outDir = File(context.cacheDir, "pdfs").apply { mkdirs() }
+        val targetApk = File(outDir, "app-debug.apk")
+        val sourceApk = File(context.applicationInfo.sourceDir)
+        sourceApk.inputStream().use { input ->
+            FileOutputStream(targetApk).use { output ->
+                input.copyTo(output)
+            }
+        }
+        return targetApk
+    }
+
+    fun shareApkFile(context: Context, apkFile: File) {
+        val uri: Uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            apkFile
+        )
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/vnd.android.package-archive"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, "Astra Astrology Malayalam — app-debug.apk")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(shareIntent, "Share APK File"))
+    }
+
+    /**
+     * Uploads a file to litterbox.catbox.moe (72h temporary hosting) and returns the direct download link.
+     */
+    fun uploadFileToLitterbox(file: File, uploadFileName: String): Result<String> {
+        return try {
+            val boundary = "----AstraBoundary" + System.currentTimeMillis()
+            val url = java.net.URL("https://litterbox.catbox.moe/resources/internals/api.php")
+            val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "POST"
+                doOutput = true
+                doInput = true
+                useCaches = false
+                connectTimeout = 45000
+                readTimeout = 90000
+                setRequestProperty("User-Agent", "AstraAstrologyMalayalam/1.0")
+                setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+            }
+
+            conn.outputStream.buffered().use { out ->
+                fun writeText(text: String) {
+                    out.write(text.toByteArray(Charsets.UTF_8))
+                }
+
+                // reqtype field
+                writeText("--$boundary\r\n")
+                writeText("Content-Disposition: form-data; name=\"reqtype\"\r\n\r\n")
+                writeText("fileupload\r\n")
+
+                // time field
+                writeText("--$boundary\r\n")
+                writeText("Content-Disposition: form-data; name=\"time\"\r\n\r\n")
+                writeText("72h\r\n")
+
+                // fileToUpload field
+                writeText("--$boundary\r\n")
+                writeText("Content-Disposition: form-data; name=\"fileToUpload\"; filename=\"$uploadFileName\"\r\n")
+                writeText("Content-Type: application/octet-stream\r\n\r\n")
+
+                file.inputStream().buffered().use { input ->
+                    input.copyTo(out)
+                }
+                writeText("\r\n--$boundary--\r\n")
+                out.flush()
+            }
+
+            val code = conn.responseCode
+            val responseText = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                ?.bufferedReader(Charsets.UTF_8)
+                ?.readText()
+                ?.trim()
+                .orEmpty()
+
+            if (code in 200..299 && responseText.startsWith("https://")) {
+                Result.success(responseText)
+            } else {
+                Result.failure(IllegalStateException("HTTP $code: $responseText"))
+            }
+        } catch (t: Throwable) {
+            Result.failure(t)
+        }
+    }
 }

@@ -1,5 +1,8 @@
 package com.example.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -7,10 +10,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -18,6 +22,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -29,7 +34,11 @@ import com.example.model.CompleteJathakamReport
 import com.example.ui.components.KeralaRashiChakraView
 import com.example.ui.components.PeriodClassificationBadge
 import com.example.ui.components.YinYangBalanceMedallion
+import com.example.util.JathakamPdfGenerator
 import com.example.viewmodel.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun HomeScreen(
@@ -253,6 +262,11 @@ fun HomeScreen(
             }
         }
 
+        // 2B. Direct APK & Full HD Logo Cloud Upload Link Generator (litter.catbox.moe)
+        item {
+            CloudDirectDownloadLinkCard()
+        }
+
         // 3. Today's / Active Panchanga Summary Card (Tithi, Nakshatra, Karana, Vara, Yoga)
         item {
             val p = report.panchanga
@@ -419,5 +433,244 @@ fun PanchangaKeyValueRow(label: String, value: String) {
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(0.6f)
         )
+    }
+}
+
+@Composable
+fun CloudDirectDownloadLinkCard(
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var isUploadingApk by remember { mutableStateOf(false) }
+    var isUploadingLogo by remember { mutableStateOf(false) }
+    var apkLink by remember { mutableStateOf<String?>(null) }
+    var logoLink by remember { mutableStateOf<String?>(null) }
+    var statusNote by remember { mutableStateOf<String?>(null) }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
+            .testTag("cloud_download_link_card")
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.CloudUpload,
+                    contentDescription = "Cloud Download Link Generator",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "APK & Full HD ലോഗോ ഡൗൺലോഡ് ലിങ്ക് (litter.catbox.moe)",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "ഒറ്റ ക്ലിക്കിൽ litter.catbox.moe വഴി നേരിട്ട് ഡൗൺലോഡ് ചെയ്യാനുള്ള ലിങ്ക് തയ്യാറാക്കുക",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = {
+                        if (!isUploadingApk) {
+                            isUploadingApk = true
+                            statusNote = "APK ഫയൽ litter.catbox.moe-ലേക്ക് അപ്‌ലോഡ് ചെയ്യുന്നു... (10–25 സെക്കൻഡ് കാത്തിരിക്കുക)"
+                            scope.launch {
+                                val result = withContext(Dispatchers.IO) {
+                                    val apkFile = JathakamPdfGenerator.exportInstalledApkFile(context)
+                                    JathakamPdfGenerator.uploadFileToCloudLink(
+                                        file = apkFile,
+                                        uploadFileName = "Astra_Astrology_Malayalam.apk",
+                                        mimeType = "application/vnd.android.package-archive"
+                                    )
+                                }
+                                isUploadingApk = false
+                                result.onSuccess { url ->
+                                    apkLink = url
+                                    statusNote = "APK ഡൗൺലോഡ് ലിങ്ക് തയ്യാറായി!"
+                                }.onFailure { err ->
+                                    statusNote = "അപ്‌ലോഡ് തടസ്സം: ${err.localizedMessage ?: "വീണ്ടും ശ്രമിക്കുക"}"
+                                }
+                            }
+                        }
+                    },
+                    enabled = !isUploadingApk,
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .testTag("btn_upload_apk_litterbox")
+                ) {
+                    if (isUploadingApk) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Uploading...", fontSize = 12.sp)
+                    } else {
+                        Icon(Icons.Default.Android, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("APK ലിങ്ക് എടുക്കുക", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        if (!isUploadingLogo) {
+                            isUploadingLogo = true
+                            statusNote = "Full HD ലോഗോ litter.catbox.moe-ലേക്ക് അപ്‌ലോഡ് ചെയ്യുന്നു..."
+                            scope.launch {
+                                val result = withContext(Dispatchers.IO) {
+                                    val logoFile = JathakamPdfGenerator.generateFullHdLogoFile(context)
+                                    JathakamPdfGenerator.uploadFileToCloudLink(
+                                        file = logoFile,
+                                        uploadFileName = "Astra_Astrology_Malayalam_Logo_FullHD.png",
+                                        mimeType = "image/png"
+                                    )
+                                }
+                                isUploadingLogo = false
+                                result.onSuccess { url ->
+                                    logoLink = url
+                                    statusNote = "Full HD ലോഗോ ഡൗൺലോഡ് ലിങ്ക് തയ്യാറായി!"
+                                }.onFailure { err ->
+                                    statusNote = "അപ്‌ലോഡ് തടസ്സം: ${err.localizedMessage ?: "വീണ്ടും ശ്രമിക്കുക"}"
+                                }
+                            }
+                        }
+                    },
+                    enabled = !isUploadingLogo,
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .testTag("btn_upload_logo_litterbox")
+                ) {
+                    if (isUploadingLogo) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Uploading...", fontSize = 12.sp)
+                    } else {
+                        Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("HD ലോഗോ ലിങ്ക്", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            if (statusNote != null) {
+                Text(
+                    text = statusNote!!,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            if (apkLink != null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "DIRECT APK LINK (72 മണിക്കൂർ സജീവം):",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.Bold
+                            )
+                            SelectionContainer {
+                                Text(
+                                    text = apkLink!!,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                        TextButton(
+                            onClick = {
+                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                cm?.setPrimaryClip(ClipData.newPlainText("APK Download Link", apkLink!!))
+                                statusNote = "APK ലിങ്ക് കോപ്പി ചെയ്തു: $apkLink"
+                            }
+                        ) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = "Copy APK Link", modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Copy")
+                        }
+                    }
+                }
+            }
+
+            if (logoLink != null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "FULL HD LOGO LINK (2048×2048 PNG):",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.Bold
+                            )
+                            SelectionContainer {
+                                Text(
+                                    text = logoLink!!,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                        TextButton(
+                            onClick = {
+                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                cm?.setPrimaryClip(ClipData.newPlainText("Logo Download Link", logoLink!!))
+                                statusNote = "ലോഗോ ലിങ്ക് കോപ്പി ചെയ്തു: $logoLink"
+                            }
+                        ) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = "Copy Logo Link", modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Copy")
+                        }
+                    }
+                }
+            }
+        }
     }
 }

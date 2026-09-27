@@ -36,7 +36,7 @@ fun AstraAdMobBanner(
     modifier: Modifier = Modifier
 ) {
     val isInspection = LocalInspectionMode.current
-    if (isInspection) return
+    if (isInspection || AdMobManager.isCloudEmulatorWithoutRenderNode()) return
 
     var adLoadFailed by remember { mutableStateOf(false) }
 
