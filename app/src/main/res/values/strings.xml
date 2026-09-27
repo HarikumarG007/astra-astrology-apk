@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">Astra Astrology Malayalam</string>
+    <string name="developer_email">harikumarg004@gmail.com</string>
+    <string name="engine_title">Advanced Astronomical Calculation Engine</string>
+    <string name="engine_subtitle">High Precision Vedic Calculation Engine</string>
+    <string name="save_horoscope_prompt">നിങ്ങളുടെ ജാതക വിവരങ്ങൾ സംരക്ഷിക്കണോ?</string>
+    <string name="save_confirm">സംരക്ഷിക്കുക</string>
+    <string name="save_decline">വേണ്ട</string>
+    <string name="delete_horoscope">Delete Horoscope</string>
+    <string name="delete_all_horoscope_data">Delete All Horoscope Data</string>
+</resources>

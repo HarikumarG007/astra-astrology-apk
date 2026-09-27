@@ -1,0 +1,6 @@
+{
+  "name": "Astra Astrology Malayalam",
+  "description": "Professional Kerala-style Malayalam Vedic Astrology (Jathakam), Panchanga, Dasha, Yoga, Career & Horoscope Platform",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

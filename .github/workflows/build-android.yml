@@ -1,0 +1,243 @@
+name: Build Android APK and AAB
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk-and-aab:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure Temurin Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Verify Java 17+ Installation
+        run: |
+          set -euo pipefail
+          echo "Checking Java version..."
+          java -version
+          echo "JAVA_HOME=${JAVA_HOME:-unset}"
+          if [ -z "${JAVA_HOME:-}" ]; then
+            echo "ERROR: JAVA_HOME is not set."
+            exit 1
+          fi
+          JAVA_VER_LINE=$(java -version 2>&1 | head -n 1)
+          echo "Detected version line: $JAVA_VER_LINE"
+          JAVA_MAJOR=$(echo "$JAVA_VER_LINE" | sed -E 's/.*"([0-9]+)(\.[0-9]+)*".*/\1/')
+          echo "Detected Java Major Version: $JAVA_MAJOR"
+          if ! [[ "$JAVA_MAJOR" =~ ^[0-9]+$ ]] || [ "$JAVA_MAJOR" -lt 17 ]; then
+            echo "ERROR: Java 17 or newer is required. Found Java major version: $JAVA_MAJOR"
+            exit 1
+          fi
+          echo "Confirmed Java $JAVA_MAJOR (>= 17) is active."
+
+      - name: Setup Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+          cache-disabled: true
+
+      - name: Ensure Temporary Debug Keystore for Debug APK
+        run: |
+          set -euo pipefail
+          if [ -f "./debug.keystore" ]; then
+            echo "Existing ./debug.keystore found in runner workspace."
+          else
+            echo "Generating temporary ./debug.keystore for debug APK build..."
+            keytool -genkeypair \
+              -v \
+              -keystore ./debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000
+          fi
+
+      - name: Build Debug APK
+        run: |
+          set -euo pipefail
+          gradle :app:assembleDebug --stacktrace --no-daemon
+
+      - name: Verify Debug APK
+        run: |
+          set -euo pipefail
+          APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
+          if [ ! -e "$APK_PATH" ]; then
+            echo "ERROR: Debug APK does not exist at $APK_PATH"
+            exit 1
+          fi
+          if [ ! -f "$APK_PATH" ]; then
+            echo "ERROR: Debug APK is not a regular file: $APK_PATH"
+            exit 1
+          fi
+          if [ ! -s "$APK_PATH" ]; then
+            echo "ERROR: Debug APK file is empty: $APK_PATH"
+            exit 1
+          fi
+          case "$APK_PATH" in
+            *.apk) echo "Verified valid non-empty .apk file at $APK_PATH" ;;
+            *) echo "ERROR: File does not have .apk extension: $APK_PATH"; exit 1 ;;
+          esac
+
+      - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Build Release AAB
+        id: build_aab
+        run: |
+          set -euo pipefail
+          echo "Starting Release AAB build..."
+          if [ -n "${KEYSTORE_PATH:-}" ] && [ -f "${KEYSTORE_PATH}" ] && [ -n "${STORE_PASSWORD:-}" ] && [ -n "${KEY_PASSWORD:-}" ]; then
+            echo "Valid production release signing configuration detected. Building signed release AAB..."
+            gradle :app:bundleRelease --stacktrace --no-daemon
+            echo "signing_note=Signed using configured production keystore." >> "$GITHUB_OUTPUT"
+          elif [ -f "./my-upload-key.jks" ] && [ -n "${STORE_PASSWORD:-}" ] && [ -n "${KEY_PASSWORD:-}" ]; then
+            echo "Valid project upload keystore detected. Building signed release AAB..."
+            gradle :app:bundleRelease --stacktrace --no-daemon
+            echo "signing_note=Signed using existing project upload keystore." >> "$GITHUB_OUTPUT"
+          else
+            echo "NOTICE: Production Play Store signing credentials/keystore are not configured."
+            echo "Production Play Store signing must be configured separately before uploading to Google Play."
+            if gradle :app:bundleRelease --stacktrace --no-daemon; then
+              echo "Release AAB generated using existing project release configuration."
+              echo "signing_note=Generated without production signing credentials; configure Play Store production signing separately." >> "$GITHUB_OUTPUT"
+            else
+              echo "Release signing step requires separate production credentials; generating release AAB package without fake credentials..."
+              gradle :app:bundleRelease -x validateSigningRelease -x signReleaseBundle --stacktrace --no-daemon
+              echo "signing_note=Unsigned release AAB generated; production Play Store signing must be configured separately." >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Verify Release AAB
+        id: verify_aab
+        run: |
+          set -euo pipefail
+          AAB_PATH="app/build/outputs/bundle/release/app-release.aab"
+          if [ ! -e "$AAB_PATH" ]; then
+            echo "ERROR: Release AAB does not exist at $AAB_PATH. Production Play Store signing may need to be configured separately."
+            exit 1
+          fi
+          if [ ! -f "$AAB_PATH" ]; then
+            echo "ERROR: Release AAB is not a regular file: $AAB_PATH"
+            exit 1
+          fi
+          if [ ! -s "$AAB_PATH" ]; then
+            echo "ERROR: Release AAB file is empty: $AAB_PATH"
+            exit 1
+          fi
+          case "$AAB_PATH" in
+            *.aab) echo "Verified valid non-empty .aab file at $AAB_PATH" ;;
+            *) echo "ERROR: File does not have .aab extension: $AAB_PATH"; exit 1 ;;
+          esac
+
+      - name: Upload Release AAB Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-aab
+          path: app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+
+      - name: Publish APK and AAB to GitHub Releases
+        id: publish_release
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RELEASE_TAG="debug-apk-aab-build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          RELEASE_TITLE="Android APK + AAB Build #${GITHUB_RUN_NUMBER}"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+
+          NOTES_FILE="$(mktemp)"
+          cat <<EOF > "$NOTES_FILE"
+          ### Automated Android Build Release
+          - **Automatically generated by GitHub Actions**
+          - **APK included:** \`app-debug.apk\`
+          - **AAB included:** \`app-release.aab\`
+          - **Workflow run number:** \`${GITHUB_RUN_NUMBER}\`
+          - **Workflow run attempt:** \`${GITHUB_RUN_ATTEMPT}\`
+          - **Source commit SHA:** \`${GITHUB_SHA}\`
+          - **APK purpose:** Intended for testing and direct installation
+          - **AAB purpose:** Intended for Google Play Store / release preparation
+          - **Debug APK signing:** Uses temporary debug signing where applicable
+          - **Production signing note:** Production Play Store signing may require separate configuration (${{ steps.build_aab.outputs.signing_note }})
+
+          #### Permanent Direct Download Links (Latest Release)
+          - **Direct APK Download:** https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/app-debug.apk
+          - **Direct AAB Download:** https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/app-release.aab
+          EOF
+
+          if gh release create "$RELEASE_TAG" \
+            "app/build/outputs/apk/debug/app-debug.apk#app-debug.apk" \
+            "app/build/outputs/bundle/release/app-release.aab#app-release.aab" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$RELEASE_TITLE" \
+            --notes-file "$NOTES_FILE" \
+            --latest; then
+            rm -f "$NOTES_FILE"
+            echo "release_status=SUCCESS" >> "$GITHUB_OUTPUT"
+          else
+            rm -f "$NOTES_FILE"
+            echo "release_status=FAILED" >> "$GITHUB_OUTPUT"
+            echo "WARNING: GitHub Release publishing failed. The built APK and AAB files and GitHub Actions artifacts (app-debug-apk and app-release-aab) remain intact and available."
+            exit 1
+          fi
+
+      - name: Write GitHub Step Summary
+        if: always()
+        run: |
+          RELEASE_TAG="debug-apk-aab-build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          RELEASE_OUTCOME="${{ steps.publish_release.outcome }}"
+          if [ "$RELEASE_OUTCOME" = "success" ]; then
+            STATUS_TEXT="Published (latest)"
+          else
+            STATUS_TEXT="Failed (GitHub Actions artifacts app-debug-apk and app-release-aab remain available)"
+          fi
+
+          cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          ## Android APK + AAB Build Summary
+
+          DIRECT APK DOWNLOAD
+
+          https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/app-debug.apk
+
+          DIRECT AAB DOWNLOAD
+
+          https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/app-release.aab
+
+          - **APK artifact:** app-debug-apk
+          - **AAB artifact:** app-release-aab
+          - **Release status:** ${STATUS_TEXT}
+          - **Release tag:** ${RELEASE_TAG}
+          - **Commit SHA:** ${GITHUB_SHA}
+          - **Signing note:** Production Play Store signing must be configured separately if not already provided.
+          EOF
+
+          if [ "$RELEASE_OUTCOME" != "success" ]; then
+            echo "ERROR: GitHub Release step did not succeed. Artifacts app-debug-apk and app-release-aab are preserved in GitHub Actions."
+            exit 1
+          fi
+
+      - name: Remove Temporary Debug Keystore
+        if: always()
+        run: |
+          rm -f ./debug.keystore
